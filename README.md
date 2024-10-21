@@ -1,4 +1,4 @@
-# Implementation of Low-rank Real Time Recurrent Learning
+# Implementation of Low-Rank Real-Time Recurrent Learning
 
 ### Train
 To run the code, follow the below.
