@@ -126,244 +126,124 @@ class LSTM:
         h = outputGate * np.tanh(c)
         return h, c
     
+    # Forward step for computing the next hidden and cell states and their gradients.
     @partial(jit, static_argnums=(0,))
     def forward_step(self, params, x, h, c, Jh_data, Jc_data):
-
-        #print("length of params In forward", len(params)) #4480
-        #print("params: ", params) #4480
-
-        ###########
-        
-        ((grad_h_params, grad_h_h, grad_h_c), (grad_c_params, grad_c_h, grad_c_c)), (h, c) = jacrev(self.lstm, argnums=(0,2,3))(params, x, h, c)
-
-        #print("type of grad_h_params: ", type(grad_h_params)) #DynamicJaxprTracer
-        #print("shape of grad_h_params: ", grad_h_params.shape) #(32,4480)
-        #print("grad_h_params: ", grad_h_params) #[32, 4480]
-
-        #print("Jh_data: ", Jh_data.shape) #(143360,)
-        #print("self.J.toDense(Jh_data): ", self.J.toDense(Jh_data).shape) #(32, 4480)
-        #print("type of self.J: ", type(self.J)) #class 'utils.SparseMatrix'
-        #print("shape of self.J: ", self.J.shape) #(32, 4480)
-        #print("shape of self.J.coords: ", len(self.J.coords)) #2
-
+        # Compute Jacobians of hidden and cell states using `jacrev`
+        ((grad_h_params, grad_h_h, grad_h_c), 
+         (grad_c_params, grad_c_h, grad_c_c)), (h, c) = jacrev(self.lstm, argnums=(0, 2, 3))(params, x, h, c)
+    
+        # Compute updated Jacobian entries for hidden state
         h_Jh = np.dot(grad_h_h, self.J.toDense(Jh_data))[tuple(self.J.coords)]
         h_Jc = np.dot(grad_h_c, self.J.toDense(Jc_data))[tuple(self.J.coords)]
         Jh = grad_h_params[tuple(self.J.coords)] + h_Jh + h_Jc
-
+    
+        # Compute updated Jacobian entries for cell state
         c_Jh = np.dot(grad_c_h, self.J.toDense(Jh_data))[tuple(self.J.coords)]
         c_Jc = np.dot(grad_c_c, self.J.toDense(Jc_data))[tuple(self.J.coords)]
         Jc = grad_c_params[tuple(self.J.coords)] + c_Jh + c_Jc
-        ############
-
+    
         return h, c, Jh, Jc
-
+    
+    # Calculate loss for a single forward pass
     @partial(jit, static_argnums=(0,))
     def calculate_loss(self, params, h, y):
-        #print("shape of params before activation: ", params.shape) #(32,)
-        #print("shape of h before activation: ", h.shape) #(32,)
-        output = self.activation(np.dot(self.V.toDense(params), h)) #inference에서는 얘를 forward_step 안으로 보내야하나?
-        #print(f"Shape of output: {output.shape}") #(1,)
+        # Compute model output
+        output = self.activation(np.dot(self.V.toDense(params), h))
+        # Compute loss using the defined loss function
         loss = self.lossFunction(output, y)
         return loss
-
+    
+    # Combine gradients from recurrent parameters and output layer parameters
     @partial(jit, static_argnums=(0,))
     def combineGradients(self, grad_h, grad_out_params, Jh_data):
-
-        #print("shape of grad_h", grad_h.shape) #(32,)
         grad_rec_params = np.dot(grad_h, self.J.toDense(Jh_data))
-        #print("shape of grad_rec_params", grad_rec_params.shape)
-        #print("shape of grad_out_params", grad_out_params.shape)
-        
         return np.concatenate((grad_rec_params, grad_out_params))
-
-
+    
+    # Calculate gradients for a single time step
     @partial(jit, static_argnums=(0,))
     def calculate_grads_step(self, params, x, y, h, c, Jh_data, Jc_data):
-
-        #print("length of params In cal grads", len(params[:self.Rz.end,]))
+        # Forward step to compute hidden and cell states and their Jacobians
         h, c, Jh_data, Jc_data = self.forward_step(params[:self.Rz.end,], x, h, c, Jh_data, Jc_data)
-        #self.debug_forward_step(params[:self.Rz.end,], x, h, c, Jh_data, Jc_data)
-
-        loss, (grad_out_params, grad_h) = value_and_grad(self.calculate_loss, argnums=(0,1))(params[self.Rz.end:,], h, y) # calculation of gradients 
+    
+        # Compute loss and gradients for the output layer
+        loss, (grad_out_params, grad_h) = value_and_grad(self.calculate_loss, argnums=(0, 1))(
+            params[self.Rz.end:,], h, y
+        )
+    
+        # Combine gradients from the recurrent and output layers
         gradient = self.combineGradients(grad_h, grad_out_params, Jh_data)
-            
         return loss, gradient, h, c, Jh_data, Jc_data
-
+    
+    # Batch processing for gradient calculation
     batch_calculate_grads_step = vmap(calculate_grads_step, in_axes=(None, None, 0, 0, 0, 0, 0, 0))
-
+    
+    # Compute gradients for the entire sequence
     def calculate_grads(self, params, x, y):
-        
         h = np.zeros(self.hidden_size)
         c = np.zeros(self.hidden_size)
-
         Jh_data = np.zeros(self.J.len)
         Jc_data = np.zeros(self.J.len)
-
         losses = []
         gradients = np.zeros_like(self.paramsData)
-
+    
+        # Iterate through each time step
         for t in range(x.shape[0]):
             loss, gradient, h, c, Jh_data, Jc_data = self.calculate_grads_step(params, x[t], y[t], h, c, Jh_data, Jc_data)
             losses.append(loss)
-            gradients = gradients + gradient/x.shape[0]
-            
+            gradients = gradients + gradient / x.shape[0]  # Average the gradients
+    
         return np.mean(np.array(losses)), gradients
-
+    
+    # Batch gradient calculation across sequences
     batch_calculate_grads = vmap(calculate_grads, in_axes=(None, None, 0, 0))
-
+    
+    # Online update for training
     def update_online(self, params, x, y):
         h = np.zeros((self.batch_size, self.hidden_size))
         c = np.zeros((self.batch_size, self.hidden_size))
-
         Jh_data = np.zeros((self.batch_size, self.J.len))
         Jc_data = np.zeros((self.batch_size, self.J.len))
-
         losses = []
-
+    
+        # Process each time step in the sequence
         for t in range(x.shape[1]):
-            loss, grads, h, c, Jh_data, Jc_data = self.batch_calculate_grads_step(params, x[:,t,:], y[:,t,:], h, c, Jh_data, Jc_data)
+            loss, grads, h, c, Jh_data, Jc_data = self.batch_calculate_grads_step(params, x[:, t, :], y[:, t, :], h, c, Jh_data, Jc_data)
             losses.append(np.mean(loss, axis=0))
-            #print("Type of grads:", type(grads)) #ArrayImpl
-            #print("Shape of grads:", grads.shape) #(16, 4512) -> 72192
+            # Update parameters using optimizer
             self.opt_state = self.opt_update(0, np.sum(grads, axis=0), self.opt_state)
             params = self.get_params(self.opt_state)
-
+    
         return self.get_params(self.opt_state), np.mean(np.array(losses), axis=0)
-
-    def update_bptt(self, params, x, y):
-        #print("x1: ", x.shape)
-        loss, grads = self.batch_calculate_grads_BPTT(params, x, y)
-        self.opt_state = self.opt_update(0, np.sum(grads, axis=0), self.opt_state)
-        #print("train loss: ", loss)
-        return self.get_params(self.opt_state), np.sum(loss, axis=0) / x.shape[0]
-
+    
+    # Offline update for training (process entire sequence at once)
     def update_offline(self, params, x, y):
         losses, grads = self.batch_calculate_grads(params, x, y)
         self.opt_state = self.opt_update(0, np.sum(grads, axis=0), self.opt_state)
-
         return self.get_params(self.opt_state), np.mean(np.array(losses), axis=0)
-
-    @partial(jit, static_argnums=(0,))
-    def forward_step_BPTT(self, paramsData, x, t, h, c, o):
-        h, c = self.lstm(paramsData[:self.Rz.end,], x[t], h, c)
-
-        output = self.activation(np.dot(self.V.toDense(paramsData[self.Rz.end:,]), h))
-        o = o.at[t].set(output)
-        return h, c, o
-
-    def calculate_loss_BPTT(self, params, x, y):
-        #print("x3: ", x.shape)
-        output = self.forward(params, x)
-        loss = self.lossFunction(output, y)
-        return loss
-
-    def calculate_grads_BPTT(self, params, x, y):
-        #print("x2: ", x.shape)
-        return value_and_grad(self.calculate_loss_BPTT)(params, x, y)
-
-    batch_calculate_grads_BPTT = vmap(calculate_grads_BPTT, in_axes=(None, None, 0, 0))
-
-    def forward(self, params, x):
-
-        '''if x.shape[0] == 1:
-            x = np.squeeze(x, axis=0)'''
-
-        h = np.zeros(self.hidden_size)
-        c = np.zeros(self.hidden_size)
-        o = np.zeros((x.shape[0], self.output_size))
-        #print("h: ", h.shape)
-        #print("x: ", x.shape)
-        #print("x[0]: ", x.shape[0])
-
-        for t in range(x.shape[0]):
-            h, c, o = self.forward_step_BPTT(params, x, t, h, c, o) #bptt는 self.forward_step_BPTT로 바꾸기, 리턴값에서 o만 씀
-            
-        return o
-
-    def predict(self, x):
-        batch_forward = vmap(self.forward, in_axes=(None, 0))
     
-        # vmap을 사용하여 전체 배치에 대해 forward 함수를 적용하고 결과를 반환
-        return batch_forward(self.paramsData, x)
-
-    def evaluate(self, x_val, y_val):
-        # 검증 데이터에 대해 손실을 계산하는 메서드입니다.
-        #x_val_reshaped = self.reshape_input(x_val)
-        #batched_loss_function = vmap(self.lossFunction, in_axes=(0, 0))
-        preds = self.predict(x_val)
-
-        #preds = preds.reshape((-1,))
-        val_loss = self.lossFunction(preds, y_val)  # loss_function은 모델에 정의되어야 하는 메서드입니다.
-        #print(val_loss.shape)
-        #print(val_loss)
-
-        return val_loss #np.sum(val_loss) / x_val.shape[0] 
-
+    # Run the training loop
     def run(self, epochs, data, validation_data):
-
         losses = []
         validation_losses = []
-        achieved_sequence_lengths = []
-        epochs_list = []  # To store epoch numbers
-
-        '''L = 1 #10
-        data.maxSeqLength = L
-        validation_data.maxSeqLength = L'''
-
-        # Start timing
+        epochs_list = []
         start_time = time.time()
-
-        for i, k in zip(range(epochs), random.split(self.key, epochs)):
-
-            x, y = data.getSample(k)
-            #print("batch: ", data.batch_size)
-            #print("train x: ", x.shape)
-            #print("self.paramsData:", self.paramsData.shape) #(4512,)
-            self.paramsData, loss = self.update(self.paramsData, x, y)
-            #total_loss = np.sum(loss)
-            losses.append(loss)
-
-            # Calculate average bits per character here
-            #num_characters = y.shape[0] * y.shape[1]  # Total number of characters in the batch
-            '''avg_loss_per_char = loss / y.shape[1]
-            avg_bits_per_char = avg_loss_per_char / np.log(2)
-            print("avg_loss_per_char:", avg_loss_per_char)
-            print("avg_bits_per_char:", avg_bits_per_char)'''
-
-            '''avg_bits_per_char = loss / np.log(2)
-
-            print("avg_bits_per_char:", avg_bits_per_char)'''
-
-            '''# Check if the condition to increase L is met
-            if loss < 0.15:
-                data.maxSeqLength += 1
-                validation_data.maxSeqLength += 1
-                # Make sure to update the data generation to reflect new maxSeqLength if necessary'''
-
-            if i % 5 == 0:
-                print('Epoch', "{:04d}".format(i))
-                print('Train Loss ', loss)
-
-                # 검증 데이터에 대한 손실을 계산합니다.
-                x_val, y_val = validation_data.getSample(k)
-                #print("valid x: ", x_val.shape)
-                val_loss = self.evaluate(x_val, y_val)  # 검증 데이터에 대한 손실 계산
-                validation_losses.append(val_loss)
-                print('Validation Loss:', val_loss)
-
-                # Track epoch number
-                epochs_list.append(i)
-
-                '''achieved_length = data.maxSeqLength
-                achieved_sequence_lengths.append(achieved_length)
-                print('Achieved sequence length:', achieved_length)'''
-
-        # End timer
-        end_time = time.time()
-
-        # Calculate total training time
-        total_training_time = end_time - start_time
-        print(f"Total training time: {total_training_time} seconds")
-
-        return self.paramsData, losses, validation_losses, epochs_list, achieved_sequence_lengths, total_training_time
     
+        # Iterate through epochs
+        for i, k in zip(range(epochs), random.split(self.key, epochs)):
+            x, y = data.getSample(k)
+            self.paramsData, loss = self.update(self.paramsData, x, y)
+            losses.append(loss)
+    
+            # Evaluate on validation data periodically
+            if i % 5 == 0:
+                print(f'Epoch {i:04d}, Train Loss: {loss}')
+                x_val, y_val = validation_data.getSample(k)
+                val_loss = self.evaluate(x_val, y_val)
+                validation_losses.append(val_loss)
+                print(f'Validation Loss: {val_loss}')
+                epochs_list.append(i)
+    
+        total_training_time = time.time() - start_time
+        print(f"Total training time: {total_training_time} seconds")
+        return self.paramsData, losses, validation_losses, epochs_list, total_training_time
