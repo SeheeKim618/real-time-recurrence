@@ -7,168 +7,123 @@ import jax.numpy as jnp
 import numpy as old_np
 from scipy.linalg import svd
 import time
-#from sophia import SophiaG
-
-from utils import BinaryCrossEntropyLoss, calculateSnApPattern, SparseMatrix, SparseMatrix_RTRL, jacrev
-
 import os
 import matplotlib.pyplot as plt
 
-"""
-LSTM model with BPTT and RTRL training algorithm.
-"""
+# Import custom utilities
+from utils import BinaryCrossEntropyLoss, calculateSnApPattern, SparseMatrix, SparseMatrix_RTRL, jacrev
+
 class LSTM:
-
-    def __init__(self, 
-                 key,
-                 input_size, 
-                 output_size, 
-                 hidden_size, 
-                 batch_size, 
-                 recurrent_density, 
-                 in_out_density, 
-                 snap_level, 
-                 lossFunction, 
-                 algo_type, 
-                 logEvery=1, 
-                 learning_rate=1e-3, 
-                 online=True):
-
+    def __init__(self, key, input_size, output_size, hidden_size, batch_size,
+                 recurrent_density, in_out_density, snap_level, lossFunction,
+                 algo_type, logEvery=1, learning_rate=1e-3, online=True):
+        # Initialize LSTM parameters
         self.key = key
         self.input_size = input_size
         self.output_size = output_size
         self.hidden_size = hidden_size
-        self.batch_size= batch_size
+        self.batch_size = batch_size
         self.recurrent_density = recurrent_density
         self.in_out_density = in_out_density
         self.logEvery = logEvery
         self.online = online
         self.activation = sigmoid
-        
+        self.learning_rate = learning_rate
+
+        # Initialize weights and Jacobian
         self.initialize_weights()
         self.jacobian_init_time = 0.0
 
-        print('LSTM with '+ algo_type)
-        print('Dense LSTM params: ', (4*hidden_size*(input_size+hidden_size) + hidden_size*output_size))
-        print('Sparse LSTM params: ', len(self.paramsData.flatten()))
-        print('Density: ', recurrent_density)
+        print(f'LSTM with {algo_type}')
+        print(f'Dense LSTM params: {4 * hidden_size * (input_size + hidden_size) + hidden_size * output_size}')
+        print(f'Sparse LSTM params: {len(self.paramsData.flatten())}')
+        print(f'Density: {recurrent_density}')
 
+        # Configure algorithm-specific updates
         if algo_type == 'rtrl':
             self.jacobian_init_time = self.initialize_jacob(2)
-
             print('Online Updates!')
             self.update = self.update_online
         elif algo_type == 'snap':
             self.jacobian_init_time = self.initialize_jacob(snap_level)
-
-            if (self.online):
+            if self.online:
                 print('Online Updates!')
                 self.update = self.update_online
-
             else:
                 print('Offline Updates!')
                 self.update = self.update_offline
         elif algo_type == 'bptt':
             self.update = self.update_bptt
 
+        # Set up optimizer
         self.opt_init, self.opt_update, self.get_params = optimizers.adam(learning_rate)
         self.opt_state = self.opt_init(self.paramsData)
         self.opt_update = jit(self.opt_update)
         self.lossFunction = lossFunction
 
     def initialize_jacob(self, snap_level):
+        # Initialize the Jacobian matrix for RTRL or SnAp
         start_time = time.time()
-        
-        print('Init Jacobian Matrix ', snap_level)
+        print(f'Initializing Jacobian Matrix at SnAp level {snap_level}')
 
+        # Combine weight and recurrent matrix row and column indices
         weightRows = np.concatenate((self.Wi.rows, self.Wo.rows, self.Wf.rows, self.Wz.rows))
         weightCols = np.concatenate((self.Wi.cols, self.Wo.cols, self.Wf.cols, self.Wz.cols))
-        
-        recurrentRows= np.concatenate((self.Ri.rows, self.Ro.rows, self.Rf.rows, self.Rz.rows))
+        recurrentRows = np.concatenate((self.Ri.rows, self.Ro.rows, self.Rf.rows, self.Rz.rows))
         recurrentCols = np.concatenate((self.Ri.cols, self.Ro.cols, self.Rf.cols, self.Rz.cols))
 
-        SnAP_rows, SnAP_cols  = calculateSnApPattern(snap_level, weightRows, weightCols, recurrentRows, recurrentCols)
-        
+        # Calculate SnAp sparsity pattern
+        SnAP_rows, SnAP_cols = calculateSnApPattern(snap_level, weightRows, weightCols, recurrentRows, recurrentCols)
+
+        # Initialize sparse Jacobian matrix
         self.J = SparseMatrix()
-        #print("shape of SnAP_rows: ", SnAP_rows.shape) #(143360,)
-        #print("shape of SnAP_cols: ", SnAP_cols.shape) #(143360,)
         self.J.jacobian(SnAP_rows, SnAP_cols, (self.hidden_size, self.Rz.end), 0)
 
-        # End timing
-        end_time = time.time()
-        
-        # Calculate elapsed time
-        jacobian_time = end_time - start_time
+        # Print Jacobian stats
+        print(f'Jacobian Shape: {self.J.shape}')
+        print(f'Jacobian params: {self.J.len}')
+        print(f'Jacobian density: {self.J.density}')
 
-        print('Jacobian Shape: ', self.J.shape) #(32, 4480)
-        print('Jacobian params: ', self.J.len)
-        print('Jacobian density: ', self.J.density)
+        return time.time() - start_time
 
-        return jacobian_time
- 
     def initialize_weights(self):
-        k1, k2, k3, k4, k5, k6, k7, k8, k9 = random.split(self.key, 9)
+        # Initialize sparse weight matrices for LSTM gates
+        keys = random.split(self.key, 9)
+        self.Wi = SparseMatrix(keys[0], self.input_size, self.hidden_size, self.in_out_density, 0)
+        self.Wo = SparseMatrix(keys[1], self.input_size, self.hidden_size, self.in_out_density, self.Wi.end)
+        self.Wf = SparseMatrix(keys[2], self.input_size, self.hidden_size, self.in_out_density, self.Wo.end)
+        self.Wz = SparseMatrix(keys[3], self.input_size, self.hidden_size, self.in_out_density, self.Wf.end)
+        self.Ri = SparseMatrix(keys[4], self.hidden_size, self.hidden_size, self.recurrent_density, self.Wz.end)
+        self.Ro = SparseMatrix(keys[5], self.hidden_size, self.hidden_size, self.recurrent_density, self.Ri.end)
+        self.Rf = SparseMatrix(keys[6], self.hidden_size, self.hidden_size, self.recurrent_density, self.Ro.end)
+        self.Rz = SparseMatrix(keys[7], self.hidden_size, self.hidden_size, self.recurrent_density, self.Rf.end)
+        self.V = SparseMatrix(keys[8], self.output_size, self.hidden_size, self.in_out_density, self.Rz.end)
 
-        self.Wi = SparseMatrix(k1, self.input_size, self.hidden_size, self.in_out_density, 0)
-        Wi_data = self.Wi.init()
-        self.Wo = SparseMatrix(k2, self.input_size, self.hidden_size, self.in_out_density, self.Wi.end)
-        Wo_data = self.Wo.init()
-        self.Wf = SparseMatrix(k3, self.input_size, self.hidden_size, self.in_out_density, self.Wo.end)
-        Wf_data = self.Wf.init()
-        self.Wz = SparseMatrix(k4, self.input_size, self.hidden_size, self.in_out_density, self.Wf.end)
-        Wz_data = self.Wz.init()
-
-        self.Ri = SparseMatrix(k5, self.hidden_size, self.hidden_size, self.recurrent_density, self.Wz.end)
-        Ri_data = self.Ri.init()
-        self.Ro = SparseMatrix(k6, self.hidden_size, self.hidden_size, self.recurrent_density, self.Ri.end)
-        Ro_data = self.Ro.init()
-        self.Rf = SparseMatrix(k7, self.hidden_size, self.hidden_size, self.recurrent_density, self.Ro.end)
-        Rf_data = self.Rf.init()
-        self.Rz = SparseMatrix(k8, self.hidden_size, self.hidden_size, self.recurrent_density, self.Rf.end)
-        Rz_data = self.Rz.init()
-
-        self.V = SparseMatrix(k9, self.output_size, self.hidden_size, self.in_out_density, self.Rz.end)
-        V_data = self.V.init()
-        
-        self.paramsData = np.concatenate((Wi_data, Wo_data, Wf_data, Wz_data, Ri_data, Ro_data, Rf_data, Rz_data, V_data))
-
+        # Flatten weight matrices into a single parameter array
+        self.paramsData = np.concatenate([
+            self.Wi.init(), self.Wo.init(), self.Wf.init(), self.Wz.init(),
+            self.Ri.init(), self.Ro.init(), self.Rf.init(), self.Rz.init(), self.V.init()
+        ])
 
     @partial(jit, static_argnums=(0,))
     def lstm(self, params, x, h, c):
+        # Perform a single forward step in the LSTM
+        wi_dense = self.Wi.toDense(params[self.Wi.start:self.Wi.end])
+        wo_dense = self.Wo.toDense(params[self.Wo.start:self.Wo.end])
+        wf_dense = self.Wf.toDense(params[self.Wf.start:self.Wf.end])
+        wz_dense = self.Wz.toDense(params[self.Wz.start:self.Wz.end])
+        ri_dense = self.Ri.toDense(params[self.Ri.start:self.Ri.end])
+        ro_dense = self.Ro.toDense(params[self.Ro.start:self.Ro.end])
+        rf_dense = self.Rf.toDense(params[self.Rf.start:self.Rf.end])
+        rz_dense = self.Rz.toDense(params[self.Rz.start:self.Rz.end])
 
-        #print("Wi: ", params[self.Wi.start:self.Wi.end,].shape)
-        #print("Ri: ", params[self.Ri.start:self.Ri.end,].shape)
-
-        #print(f"Ri start: {self.Ri.start}, Ri end: {self.Ri.end}")
-        #print("length of params In lstm", len(params))
-
-        # Convert materialized params to dense if necessary
-        wi_dense = self.Wi.toDense(params[self.Wi.start:self.Wi.end,])
-        wo_dense = self.Wo.toDense(params[self.Wo.start:self.Wo.end,])
-        wf_dense = self.Wf.toDense(params[self.Wf.start:self.Wf.end,])
-        wz_dense = self.Wz.toDense(params[self.Wz.start:self.Wz.end,])
-        ri_dense = self.Ri.toDense(params[self.Ri.start:self.Ri.end,])
-        ro_dense = self.Ro.toDense(params[self.Ro.start:self.Ro.end,])
-        rf_dense = self.Rf.toDense(params[self.Rf.start:self.Rf.end,])
-        rz_dense = self.Rz.toDense(params[self.Rz.start:self.Rz.end,])
-        #print("Shape of wi_dense:", wi_dense.shape)
-        #print("Shape of ri_dense:", ri_dense.shape)
-
-        # Use the dense matrices in the LSTM computations
         inputGate = sigmoid(np.dot(x, wi_dense) + np.dot(h, ri_dense))
         outputGate = sigmoid(np.dot(x, wo_dense) + np.dot(h, ro_dense))
         forgetGate = sigmoid(np.dot(x, wf_dense) + np.dot(h, rf_dense))
+        z = np.tanh(np.dot(x, wz_dense) + np.dot(h, rz_dense))
 
-        # Cell Input
-        #print("Wz: ", params[self.Wz.start:self.Wz.end,].shape)
-        z = np.tanh(np.dot(x, self.Wz.toDense(params[self.Wz.start:self.Wz.end,])) + np.dot(h, self.Rz.toDense(params[self.Rz.start:self.Rz.end,])))
-
-        # Cell State
         c = forgetGate * c + inputGate * z
-
-        # Cell Output
         h = outputGate * np.tanh(c)
-
         return h, c
     
     @partial(jit, static_argnums=(0,))
