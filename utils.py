@@ -149,79 +149,50 @@ class SparseMatrix:
         #print(f"Expected shape: {self.shape}")
         #print(f"Coordinates: {self.coords}")
         return np.zeros(self.shape).at[tuple(self.coords)].add(data)
-
-class SparseMatrix_RTRL:
-
-    def __init__(self, key=random.PRNGKey(1), m=10, n=10, density=1, start=0):
-        self.key = key
-        self.density = density
-        self.shape = (m, n) 
-        self.start = start
-        # 비제로 값들을 저장할 배열을 초기화합니다. 초기값을 0으로 설정합니다.
-        self.data = np.zeros(self.calculate_non_zero_entries())
-
-    def calculate_non_zero_entries(self):
-        # 예상되는 비제로(non-zero) 값들의 개수를 계산합니다.
-        return int(round(self.density * self.shape[0] * self.shape[1]))
-
-    def jacobian_RTRL(self, rows, cols, shape, start):
-        self.rows = rows 
-        self.cols = cols 
-        self.shape = shape 
-        self.start = start
-        self.end = start + len(rows) 
-        self.coords = (rows, cols)
-        self.len = len(rows)
-        self.density = self.len / (shape[0] * shape[1])
-        
-    def init(self):
-        k1, k2 = random.split(self.key, 2)
-        (m, n) = self.shape
-        mn = m * n
-
-        bound = np.sqrt(1/m)
-
-        # Number of non zero values
-        k = int(round(self.density * m * n))
-
-        # flat index
-        ind = random.choice(k1, mn, shape=(k,), replace=False).sort()
-
-        row = np.floor(ind * 1. / n).astype(np.int16)
-        col = (ind - row * n).astype(np.int16)
-        #data = random.normal(self.key, (k,))
-        self.data = random.uniform(self.key, (k,), minval=-bound, maxval=bound)
-
-        self.rows = np.asarray(row) 
-        self.cols = np.asarray(col)
-        self.len = len(self.rows)
-        self.end = self.start + self.len
-        self.coords = (self.rows, self.cols)
-
-        return np.asarray(self.data)
-
-    def update_jacobian(self, update_values):
-        # Assuming update_values is a dense array with the same shape as the jacobian
-        # Update the non-zero entries of the sparse matrix with the new values
-        # We're only updating the non-zero entries, corresponding to the original sparsity pattern
-        self.data = update_values
-        print("Jacobian shape is: ", self.data.shape)
-
+    
     @partial(jit, static_argnums=(0,))
-    def toDense(self, data):
-        return np.zeros(self.shape).at[tuple(self.coords)].add(data)
+    def toDense_rtrl(self, data):
 
-    @partial(jit, static_argnums=(0,))
-    def toDense_RTRL(self, data):
-        # 데이터를 바탕으로 희소 행렬을 밀집 행렬로 변환
-        dense_matrix = np.zeros(self.shape)
-        dense_matrix[self.rows, self.cols] = data
-        return dense_matrix
+        return data.reshape(self.shape)
 
 @jit
 def BinaryCrossEntropyLoss(y_hat, y):
+    #print("y: ", y.shape)
+    #print("y_hat", y_hat.shape)
+
     loss =  -(y * log(y_hat) + (1-y)* log(1-y_hat))
     return np.mean(loss)
+
+@jit
+def CrossEntropyLoss(y_hat, y):
+
+    #print("y: ", y.shape) #-> (100,)
+    #print("y_hat", y_hat.shape) #-> (100, 1013)
+
+    epsilon = 1e-10  # Small constant to avoid log(0)
+    
+    # Select only the predicted probability for the correct class
+    correct_probs = y_hat[np.arange(y.shape[0]), y]  # Shape: (batch_size,)
+
+    # Compute cross-entropy loss
+    loss = -np.mean(np.log(correct_probs + epsilon))  # the average loss over all 100 time steps.
+
+    return loss
+
+@jit
+def CrossEntropyLoss_RTRL(y_hat, y):
+    #print("This is CrossEntropyLoss_RTRL")
+    #print("y: ", y.shape) #-> ()
+    #print("y_hat", y_hat.shape) #-> (1013,)
+    epsilon = 1e-10  # Small constant to avoid log(0)
+    # y is a scalar index, and y_hat is a vector of probabilities/logits.
+    # Compute negative log likelihood for the correct class:
+    loss = -jnp.log(y_hat[y] + epsilon)
+    return loss
+
+
+def one_hot_encoding(y, vocab_size):
+    return jnp.eye(vocab_size)[y.squeeze()]
 
 def compute_ema(data, alpha):
     """Compute the Exponential Moving Average (EMA) of a data series."""
