@@ -10,7 +10,7 @@ The code is developed using Jax and python 3.10. GPUs are not necessarily needed
 
 ## Quick start
 ### Installation
-3. Install dependencies:
+Install dependencies:
    ```
    pip install -r requirements.txt
    ```
