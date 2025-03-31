@@ -1,4 +1,4 @@
-# Real-time Low-rank Recurrent Learning
+# Real-time Low-rank Recurrent Learning (UoM 2024)
 
 This repo contains the Real-time Recurrent Learning (RTRL) implementation of paper [Real-time Low-rank Recurrent Learning](https://drive.google.com/file/d/1cbxlMFmYMxHMe5p-0QS0sHMZGQXzZ-j3/view?usp=sharing), by Sehee Kim.
 
