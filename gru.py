@@ -9,7 +9,7 @@ from scipy.linalg import svd
 import time
 #from sophia import SophiaG
 
-from utils import BinaryCrossEntropyLoss, calculateSnApPattern, SparseMatrix, SparseMatrix_RTRL, jacrev
+from utils import BinaryCrossEntropyLoss, calculateSnApPattern, SparseMatrix, jacrev
 
 import os
 import matplotlib.pyplot as plt
@@ -204,6 +204,8 @@ class GRU:
     @partial(jit, static_argnums=(0,))
     def calculate_grads_step(self, params, x, y, h, Jh_data):
 
+        #print("x_shape: ", x.shape) #(3,) - offline, online
+
         #print("length of params In cal grads", len(params[:self.Rz.end,]))
         h, Jh_data = self.forward_step(params[:self.Rh.end,], x, h, Jh_data)
         #self.debug_forward_step(params[:self.Rz.end,], x, h, c, Jh_data, Jc_data)
@@ -213,7 +215,27 @@ class GRU:
             
         return loss, gradient, h, Jh_data
 
-    batch_calculate_grads_step = vmap(calculate_grads_step, in_axes=(None, None, 0, 0, 0, 0))
+    batch_calculate_grads_step = vmap(calculate_grads_step, in_axes=(None, None, 0, 0, 0, 0)) #batch training
+
+    def update_online(self, params, x, y):
+        h = np.zeros((self.batch_size, self.hidden_size))
+        Jh_data = np.zeros((self.batch_size, self.J.len)) #(batch_size, Jacob_params) (16, 107520)
+        #print("hiiiiiiiiiii", Jh_data.shape)
+
+        losses = []
+
+        #print("x_shape: ", x.shape) # (16, 22, 3)
+
+        for t in range(x.shape[1]): #(batch_size, seq_length, input_size)
+            #print("x[:, t, :]_shape: ", x[:, t, :].shape) #(16,3)
+            loss, grads, h, Jh_data = self.batch_calculate_grads_step(params, x[:, t, :], y[:, t, :], h, Jh_data)
+            losses.append(np.mean(loss, axis=0))
+            #print("Type of grads:", type(grads)) #ArrayImpl
+            #print("Shape of grads:", grads.shape) #(16, 4512) -> 72192
+            self.opt_state = self.opt_update(0, np.sum(grads, axis=0), self.opt_state)
+            params = self.get_params(self.opt_state)
+
+        return self.get_params(self.opt_state), np.mean(np.array(losses), axis=0)
 
     def calculate_grads(self, params, x, y):
         
@@ -224,7 +246,7 @@ class GRU:
         losses = []
         gradients = np.zeros_like(self.paramsData)
 
-        for t in range(x.shape[0]):
+        for t in range(x.shape[0]): #(seq_length, input_size)
             loss, gradient, h, Jh_data = self.calculate_grads_step(params, x[t], y[t], h, Jh_data)
             losses.append(loss)
             gradients = gradients + gradient/x.shape[0]
@@ -233,33 +255,19 @@ class GRU:
 
     batch_calculate_grads = vmap(calculate_grads, in_axes=(None, None, 0, 0))
 
-    def update_online(self, params, x, y):
-        h = np.zeros((self.batch_size, self.hidden_size))
-        Jh_data = np.zeros((self.batch_size, self.J.len))
-
-        losses = []
-
-        for t in range(x.shape[1]):
-            loss, grads, h, Jh_data = self.batch_calculate_grads_step(params, x[:, t, :], y[:, t, :], h, Jh_data)
-            losses.append(np.mean(loss, axis=0))
-            #print("Type of grads:", type(grads)) #ArrayImpl
-            #print("Shape of grads:", grads.shape) #(16, 4512) -> 72192
-            self.opt_state = self.opt_update(0, np.sum(grads, axis=0), self.opt_state)
-            params = self.get_params(self.opt_state)
-
-        return self.get_params(self.opt_state), np.mean(np.array(losses), axis=0)
-
-    def update_bptt(self, params, x, y):
-        loss, grads = self.batch_calculate_grads_BPTT(params, x, y)
-        self.opt_state = self.opt_update(0, np.sum(grads, axis=0), self.opt_state)
-
-        return self.get_params(self.opt_state), np.sum(loss, axis=0) / x.shape[0]
-
     def update_offline(self, params, x, y):
+        #print("x_shape_offline: ", x.shape) #(16, 22, 3)
         losses, grads = self.batch_calculate_grads(params, x, y)
         self.opt_state = self.opt_update(0, np.sum(grads, axis=0), self.opt_state)
 
         return self.get_params(self.opt_state), np.mean(np.array(losses), axis=0)
+
+    def update_bptt(self, params, x, y):
+        print("x_shape_training_0: ", x.shape) #(16, 22, 3)
+        loss, grads = self.batch_calculate_grads_BPTT(params, x, y)
+        self.opt_state = self.opt_update(0, np.sum(grads, axis=0), self.opt_state)
+
+        return self.get_params(self.opt_state), np.sum(loss, axis=0) / x.shape[0]
 
     @partial(jit, static_argnums=(0,))
     def forward_step_BPTT(self, paramsData, x, t, h, o):
@@ -283,13 +291,17 @@ class GRU:
         return h, o
         
     def calculate_loss_BPTT(self, params, x, y):
-        #print("x3: ", x.shape)
+
+        #print("x_shape_training_2: ", x.shape)
         output = self.forward(params, x)
+        #print("output: ", output.shape)
         loss = self.lossFunction(output, y)
+        #print("loss: ", loss.shape)
         return loss
 
     def calculate_grads_BPTT(self, params, x, y):
         #print("x2: ", x.shape)
+        #print("x_shape_training_1: ", x.shape)
         return value_and_grad(self.calculate_loss_BPTT)(params, x, y)
 
     batch_calculate_grads_BPTT = vmap(calculate_grads_BPTT, in_axes=(None, None, 0, 0))
@@ -305,12 +317,13 @@ class GRU:
         #print("x: ", x.shape)
         #print("x[0]: ", x.shape[0])
 
-        for t in range(x.shape[0]):
+        for t in range(x.shape[0]): #(seq_length, input_size)
             h, o = self.forward_step_BPTT(params, x, t, h, o) #bptt는 self.forward_step_BPTT로 바꾸기, 리턴값에서 o만 씀
             
         return o
 
-    def predict(self, x):
+    '''def predict(self, x):
+        print("x_shape_validation: ", x.shape)
         batch_forward = vmap(self.forward, in_axes=(None, 0))
     
         # vmap을 사용하여 전체 배치에 대해 forward 함수를 적용하고 결과를 반환
@@ -327,7 +340,20 @@ class GRU:
         #print(val_loss.shape)
         #print(val_loss)
 
-        return val_loss #np.sum(val_loss) / x_val.shape[0] 
+        return val_loss #np.sum(val_loss) / x_val.shape[0] '''
+
+    def predict(self, x, y):
+        #print("x_shape_validation: ", x.shape)  # Expected: (batch_size, seq_length)
+        # Vectorize calculate_loss_BPTT over the batch dimension of x and y:
+        val_loss_fn = vmap(self.calculate_loss_BPTT, in_axes=(None, 0, 0))
+        # This applies calculate_loss_BPTT for each sample in the batch.
+        return val_loss_fn(self.paramsData, x, y)
+
+    def evaluate(self, x_val, y_val):
+        # Compute the loss for each sample in the batch:
+        losses = self.predict(x_val, y_val)
+        # Average over the batch to get a scalar validation loss:
+        return np.mean(losses)
 
     def run(self, epochs, data, validation_data):
 
@@ -348,6 +374,7 @@ class GRU:
             x, y = data.getSample(k)
             #print("batch: ", data.batch_size)
             #print("train x: ", x.shape)
+            #print("train y: ", y.shape)
             #print("self.paramsData:", self.paramsData.shape) #(4512,)
             self.paramsData, loss = self.update(self.paramsData, x, y)
             #total_loss = np.sum(loss)
@@ -374,10 +401,11 @@ class GRU:
                 print('Epoch', "{:04d}".format(i))
                 print('Train Loss ', loss)
 
-                # 검증 데이터에 대한 손실을 계산합니다.
                 x_val, y_val = validation_data.getSample(k)
                 #print("valid x: ", x_val.shape)
-                val_loss = self.evaluate(x_val, y_val)  # 검증 데이터에 대한 손실 계산
+                #print("valid x: ", x_val.shape)
+                #print("valid y: ", y_val.shape)
+                val_loss = self.evaluate(x_val, y_val) 
                 validation_losses.append(val_loss)
                 print('Validation Loss:', val_loss)
 
