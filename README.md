@@ -9,6 +9,7 @@ Recurrent Neural Networks (RNNs) are designed to learn long-term dependencies in
 ### Validation Loss on copy task 
 ![Illustrating the performance](/figures/result1.png)
 
+
 ### Comparison of the number of Jacobian parameters on copy task 
 |          | RTRL | SnAp-1 | SnAp-2 (d = 0.6) | LoRA-RTRL (r = 2,8) |
 |--------------------|----------|------------|---------|--------|
