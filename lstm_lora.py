@@ -10,7 +10,7 @@ import time
 #from sophia import SophiaG
 #import lorax
 
-from utils import BinaryCrossEntropyLoss, calculateSnApPattern, SparseMatrix, SparseMatrix_RTRL, jacrev
+from utils import BinaryCrossEntropyLoss, calculateSnApPattern, SparseMatrix, jacrev
 
 import os
 import matplotlib.pyplot as plt
@@ -554,8 +554,6 @@ class LSTM_LORA:
             #total_loss = np.sum(loss)
             losses.append(loss)
 
-            #이때 파라미터 (4480,)으로 바꿔야하나
-
             # Check if the condition to increase L is met
             '''if loss < 0.15:
                 data.maxSeqLength += 1
@@ -566,9 +564,8 @@ class LSTM_LORA:
                 print('Epoch', "{:04d}".format(i))
                 print('Train Loss ', loss)
 
-                # 검증 데이터에 대한 손실을 계산합니다.
                 x_val, y_val = validation_data.getSample(k)
-                val_loss = self.evaluate(x_val, y_val)  # 검증 데이터에 대한 손실 계산
+                val_loss = self.evaluate(x_val, y_val) 
                 validation_losses.append(val_loss)
                 print('Validation Loss:', val_loss)
 
