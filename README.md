@@ -33,6 +33,16 @@ python main.py --model [lstm or gru] --type [rtrl or lora_rtrl or snap or bptt] 
 
 ## Citation
 ````
+@article{hu2022lora,
+  title={Lora: Low-rank adaptation of large language models.},
+  author={Hu, Edward J and Shen, Yelong and Wallis, Phillip and Allen-Zhu, Zeyuan and Li, Yuanzhi and Wang, Shean and Wang, Lu and Chen, Weizhu and others},
+  journal={ICLR},
+  volume={1},
+  number={2},
+  pages={3},
+  year={2022}
+}
+
 @inproceedings{
 menick2021practical,
 title={Practical Real Time Recurrent Learning with a Sparse Approximation},
