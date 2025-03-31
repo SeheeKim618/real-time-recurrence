@@ -10,7 +10,7 @@ import time
 #from sophia import SophiaG
 #import lorax
 
-from utils import BinaryCrossEntropyLoss, calculateSnApPattern, SparseMatrix, SparseMatrix_RTRL, jacrev
+from utils import BinaryCrossEntropyLoss, calculateSnApPattern, SparseMatrix, jacrev
 
 import os
 import matplotlib.pyplot as plt
@@ -64,6 +64,7 @@ class GRU_LORA:
         print('Rank_w: ', self.rank_constraint_w)
         print('Rank_r: ', self.rank_constraint_r)
         print('Shape of Frozen params: ', self.frozen_params.shape)
+        print('RTRL Jacobian total param: ', (frozen_params.shape[0]-hidden_size)*hidden_size)
 
         #self.opt_init, self.opt_update, self.get_params = optimizers.adam(learning_rate)
         #self.opt_init, self.opt_update, self.get_params = SophiaG(learning_rate)
@@ -172,11 +173,11 @@ class GRU_LORA:
         Wh_data = params[offset:offset + sizes[2]].reshape(Wh_shape)
         offset += sizes[2]
         Rr_data = params[offset:offset + sizes[3]].reshape(Rr_shape)
-        offset += sizes[4]
+        offset += sizes[3]
         Ru_data = params[offset:offset + sizes[4]].reshape(Ru_shape)
-        offset += sizes[5]
+        offset += sizes[4]
         Rh_data = params[offset:offset + sizes[5]].reshape(Rh_shape)
-        offset += sizes[6]
+        offset += sizes[5]
         V_data = params[offset:offset + sizes[6]].reshape(V_shape)
 
         param_tree = {
@@ -218,11 +219,11 @@ class GRU_LORA:
         # Calculate elapsed time
         jacobian_time = end_time - start_time
 
-        print('Jacobian Shape for a: ', self.J_a.shape) #(32, 2048)
+        print('Jacobian Shape for a: ', self.J_a.shape) #(32, 2048) 768+1+192
         print('Jacobian Shape for b: ', self.J_b.shape) #(32, 1120)
         print('Jacobian params for a: ', self.J_a.len) #65536
         print('Jacobian params for b: ', self.J_b.len) #35840
-        print('Jacobian total params: ', (self.J_a.len + self.J_b.len)) #101376
+        print('RTRL_LoRA Jacobian total params: ', (self.J_a.len + self.J_b.len)) #101376
 
         return jacobian_time
     
@@ -290,7 +291,6 @@ class GRU_LORA:
         grad_h_params_flat_b = jnp.concatenate(grad_h_flattened_params_b, axis=1)
 
         #print("type of self.J_a: ", type(self.J_a))
-        #print("Jh_data_a: ", Jh_data_a.shape)
         # Compute Jacobian products and update Jh, Jc
         h_Jh_a = np.dot(grad_h_h, self.J_a.toDense(Jh_data_a))[tuple(self.J_a.coords)]
         Jh_a = grad_h_params_flat_a[tuple(self.J_a.coords)] + h_Jh_a 
@@ -387,7 +387,20 @@ class GRU_LORA:
             
         return o
 
-    def predict(self, x):
+    def predict(self, x, y):
+        #print("x_shape_validation: ", x.shape)  # Expected: (batch_size, seq_length)
+        # Vectorize calculate_loss_BPTT over the batch dimension of x and y:
+        val_loss_fn = vmap(self.calculate_loss_val, in_axes=(None, 0, 0))
+        # This applies calculate_loss_BPTT for each sample in the batch.
+        return val_loss_fn(self.lora_params, x, y)
+
+    def evaluate(self, x_val, y_val):
+        # Compute the loss for each sample in the batch:
+        losses = self.predict(x_val, y_val)
+        # Average over the batch to get a scalar validation loss:
+        return np.mean(losses)
+
+    '''def predict(self, x):
         batch_forward = vmap(self.forward, in_axes=(None, 0))
     
         # vmap을 사용하여 전체 배치에 대해 forward 함수를 적용하고 결과를 반환
@@ -404,7 +417,7 @@ class GRU_LORA:
         #print(val_loss.shape)
         #print(val_loss)
 
-        return val_loss #np.sum(val_loss) / x_val.shape[0] 
+        return val_loss #np.sum(val_loss) / x_val.shape[0] '''
     
     def unflatten_params_from_order(self, flattened_params, param_order, lora_params, ab_key):
         """
@@ -513,8 +526,6 @@ class GRU_LORA:
             #total_loss = np.sum(loss)
             losses.append(loss)
 
-            #이때 파라미터 (4480,)으로 바꿔야하나
-
             # Check if the condition to increase L is met
             '''if loss < 0.15:
                 data.maxSeqLength += 1
@@ -525,9 +536,8 @@ class GRU_LORA:
                 print('Epoch', "{:04d}".format(i))
                 print('Train Loss ', loss)
 
-                # 검증 데이터에 대한 손실을 계산합니다.
                 x_val, y_val = validation_data.getSample(k)
-                val_loss = self.evaluate(x_val, y_val)  # 검증 데이터에 대한 손실 계산
+                val_loss = self.evaluate(x_val, y_val) 
                 validation_losses.append(val_loss)
                 print('Validation Loss:', val_loss)
 
