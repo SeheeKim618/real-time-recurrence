@@ -9,7 +9,7 @@ from scipy.linalg import svd
 import time
 #from sophia import SophiaG
 
-from utils import BinaryCrossEntropyLoss, calculateSnApPattern, SparseMatrix, SparseMatrix_RTRL, jacrev
+from utils import BinaryCrossEntropyLoss, calculateSnApPattern, SparseMatrix, jacrev
 
 import os
 import matplotlib.pyplot as plt
@@ -389,10 +389,9 @@ class LSTM:
                 print('Epoch', "{:04d}".format(i))
                 print('Train Loss ', loss)
 
-                # 검증 데이터에 대한 손실을 계산합니다.
                 x_val, y_val = validation_data.getSample(k)
                 #print("valid x: ", x_val.shape)
-                val_loss = self.evaluate(x_val, y_val)  # 검증 데이터에 대한 손실 계산
+                val_loss = self.evaluate(x_val, y_val) 
                 validation_losses.append(val_loss)
                 print('Validation Loss:', val_loss)
 
