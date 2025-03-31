@@ -25,7 +25,7 @@ def main(args):
     learning_rate = 1e-3
     batch_size = 16
 
-    maxSeqLength = 105
+    maxSeqLength = 10
     minSeqLength = np.maximum(1, (maxSeqLength-5))
     bits = 1
     padding = 0
@@ -34,18 +34,18 @@ def main(args):
 
     input_size = bits+2
     output_size = bits
-    hidden_size = 128
+    hidden_size = 32
 
     seq_length = 2*maxSeqLength + 2
     
     lossFunction = BinaryCrossEntropyLoss
 
     # Define different rank constraints for each parameter
-    rank_constraint_w = 8  
+    rank_constraint_w = 2  
     rank_constraint_r = 8 
 
     # Load the pre-trained model parameters
-    trained_model = np.load('trained_model_gru_32_bptt_7.npz')
+    trained_model = np.load('./saved_model_copytask/trained_model_gru_32_bptt_7.npz')
     frozen_params = trained_model['params']
 
     data = CopyTaskData(batch_size, maxSeqLength, minSeqLength, bits, padding, lowValue, highValue)
