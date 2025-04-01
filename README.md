@@ -9,7 +9,7 @@ For GRU, the update rules are modified to include low-rank terms. The standard
 GRU equations are:  
 $$z_t = \sigma\Bigl(\bigl(W_z + W_z^A W_z^B\bigr)x_t + \bigl(U_z + U_z^A U_z^B\bigr)h_{t-1} + b_z\Bigr),$$  
 $$r_t = \sigma\bigl(\bigl(W_r + W_r^A W_r^B\bigr)\,x_t \;+\; \bigl(U_r + U_r^A U_r^B\bigr)\,h_{t-1} + b_r\bigr),$$  
-$$\tilde{h}_t = \tanh\!\Bigl(\bigl(W_h + W_h^A W_h^B\bigr)\,x_t \;+\; \bigl(U_h + U_h^A U_h^B\bigr)\,\bigl(r_t \odot h_{t-1}\bigr) + b_h\Bigr),$$  
+$$\tilde{h}_t = \tanh\Bigl(\bigl(W_h + W_h^A W_h^B\bigr)x_t + \bigl(U_h + U_h^A U_h^B\bigr)(r_t \odot h_{t-1}) + b_h\Bigr),$$  
 $$h_t = \bigl(1 - z_t\bigr)\,\odot\,h_{t-1} \;+\; z_t \,\odot\,\tilde{h}_t$$  
 
 In the modified GRU:
