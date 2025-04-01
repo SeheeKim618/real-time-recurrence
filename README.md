@@ -5,8 +5,16 @@ This repo contains the Real-time Recurrent Learning (RTRL) implementation from t
 ## Introduction
 Recurrent Neural Networks (RNNs) are designed to learn long-term dependencies in sequential data. The most widely used training method for RNNs, Backpropagation Through Time (BPTT), requires storing a complete history of network states, which prevents online weight updates after each timestep. In contrast, Real-Time Recurrent Learning (RTRL) enables online updates without storing the entire history using forward-mode differentiation. However, the computational cost of RTRL scales quadratically with the state size, making it impractical for even moderately sized RNN models. Recent approaches have attempted to reduce these costs by providing sparse approximations to RTRL. However, they have not achieved the same level of performance as RTRL and still require similar training times. This thesis introduces a novel and efficient approximation for RTRL based on Low-Rank Adaptation (LoRA). We show that applying low-rank adaptation to RTRL achieves a 57.9\% faster training time than standard RTRL and reduces the number of Jacobian parameters by up to 1.9 times without compromising performance. These reductions become more significant as the number of hidden layers increases. Additionally, we find that varying the rank for different components of weights in neural networks is more effective than using a fixed rank, as in the original LoRA method. We empirically compare our approach to recent RTRL algorithms, such as the Sparse n-step Approximation (SnAp), by reproducing their results. Our method reduces training time by up to 50\% while achieving better performance than SnAp-1.
 
-
+For GRU, the update rules are modified to include low-rank terms. The standard
+GRU equations are:  
 $$z_t = \sigma\Bigl(\bigl(W_z + W_z^A W_z^B\bigr)x_t + \bigl(U_z + U_z^A U_z^B\bigr)h_{t-1} + b_z\Bigr),$$  
+$$r_t = \sigma\bigl(\bigl(W_r + W_r^A W_r^B\bigr)\,x_t \;+\; \bigl(U_r + U_r^A U_r^B\bigr)\,h_{t-1} + b_r\bigr),$$  
+$$\tilde{h}_t = \tanh\!\Bigl(\bigl(W_h + W_h^A W_h^B\bigr)\,x_t \;+\; \bigl(U_h + U_h^A U_h^B\bigr)\,\bigl(r_t \odot h_{t-1}\bigr) + b_h\Bigr),$$  
+$$h_t = \bigl(1 - z_t\bigr)\,\odot\,h_{t-1} \;+\; z_t \,\odot\,\tilde{h}_t$$  
+
+In the modified GRU:
+
+$$z_t = \sigma\bigl(\bigl(W_z + W_z^A W_z^B\bigr)\,x_t \;+\; \bigl(U_z + U_z^A U_z^B\bigr)\,h_{t-1} + b_z\bigr),$$  
 $$r_t = \sigma\bigl(\bigl(W_r + W_r^A W_r^B\bigr)\,x_t \;+\; \bigl(U_r + U_r^A U_r^B\bigr)\,h_{t-1} + b_r\bigr),$$  
 $$\tilde{h}_t = \tanh\!\Bigl(\bigl(W_h + W_h^A W_h^B\bigr)\,x_t \;+\; \bigl(U_h + U_h^A U_h^B\bigr)\,\bigl(r_t \odot h_{t-1}\bigr) + b_h\Bigr),$$  
 $$h_t = \bigl(1 - z_t\bigr)\,\odot\,h_{t-1} \;+\; z_t \,\odot\,\tilde{h}_t$$
