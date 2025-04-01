@@ -11,9 +11,7 @@ $$J_t = I_t + D_t J_{t-1}$$
 
 We decompose the influence Jacobian $J_t$ - including the immediate Jacobian $I_t$, and the influence Jacobian from the previous timestep $J_{t-1}$ - into two low-rank matrices, $J_A$ and $J_B$. Thus, the low-rank Jacobian can be expressed as:
 
-$$J_{B_{\leq t}}$$
-
-J_{A_{<t}} = J_{B_t} J_{A_t} + D_t J_{B_{<t-1}}^{-1} J_{A_{<t-1}}
+$$J_{B_{\leq t}} J_{A_{\leq t}} = J_{B_t} J_{A_t} + D_t J_{B_{\leq t-1}}^{-1} J_{A_{\leq t-1}}$$
 
 For GRU, the update rules are also modified to include low-rank terms. The standard
 GRU equations are: 
