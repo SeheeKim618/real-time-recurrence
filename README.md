@@ -7,7 +7,14 @@ Recurrent Neural Networks (RNNs) are designed to learn long-term dependencies in
 
 $$a+b=3$$
 
-$$z_t &= \sigma\Bigl(W_z\,x_t + U_z\,h_{t-1}\Bigr),\\r_t &= \sigma\Bigl(W_r\,x_t + U_r\,h_{t-1}\Bigr),\\\tilde{h}_t &= \tanh\Bigl(W_h\,x_t + U_h\,(r_t \odot h_{t-1})\Bigr),\\h_t &= (1 - z_t) \odot h_{t-1} + z_t \odot \tilde{h}_t$$
+$$
+\begin{array}{rcl}
+z_t &=& \sigma\Bigl(W_z\,x_t + U_z\,h_{t-1}\Bigr),\\[6pt]
+r_t &=& \sigma\Bigl(W_r\,x_t + U_r\,h_{t-1}\Bigr),\\[6pt]
+\tilde{h}_t &=& \tanh\Bigl(W_h\,x_t + U_h\,(r_t \odot h_{t-1})\Bigr),\\[6pt]
+h_t &=& (1 - z_t) \odot h_{t-1} + z_t \odot \tilde{h}_t.
+\end{array}
+$$
 
 \[
 \begin{aligned}
